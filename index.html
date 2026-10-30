@@ -26,14 +26,17 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 .stage{position:relative;min-width:0;min-height:0;background:var(--scene);overflow:hidden}
 canvas#c{display:block;width:100%;height:100%;touch-action:none}
 #labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.tag{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;font:500 10.5px/1 var(--mono);letter-spacing:.04em;padding:3px 6px;border-radius:2px;background:var(--surface);color:var(--ink);border:1px solid var(--line);opacity:.95}
+#leaders{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+#leaders line{stroke:var(--muted);stroke-width:1;opacity:.7}
+#leaders circle{fill:var(--muted);opacity:.8}
+.tag{position:absolute;left:0;top:0;white-space:nowrap;font:500 10.5px/1 var(--mono);letter-spacing:.04em;padding:3px 6px;border-radius:2px;background:var(--surface);color:var(--ink);border:1px solid var(--line);opacity:.95}
 .tag.ac{color:var(--accent);border-color:var(--accent)}
 .tag.no{color:var(--warn);border-color:var(--warn)}
 .tag.am{color:#FFB454;border-color:#FFB454}
 .hint{position:absolute;left:14px;bottom:12px;right:14px;font:400 11px/1.4 var(--mono);color:var(--muted);opacity:.85;pointer-events:none}
 .insets{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none}
 .inset{position:relative;border:1px solid var(--accent);border-radius:2px;background:transparent}
-.cap{position:absolute;left:0;top:0;transform:translateY(-100%);font:500 10px/1 var(--mono);letter-spacing:.06em;color:var(--accent);background:var(--surface);padding:3px 6px;border:1px solid var(--accent);border-bottom:0;white-space:nowrap}
+.cap{position:absolute;right:-1px;top:0;transform:translateY(-100%);font:500 10px/1 var(--mono);letter-spacing:.06em;color:var(--accent);background:var(--surface);padding:3px 6px;border:1px solid var(--accent);border-bottom:0;white-space:nowrap}
 .pixbox{position:relative;margin-top:14px;background:var(--surface);border:1px solid var(--warn);border-radius:2px}
 .pixbox canvas{display:block;width:140px;height:140px;image-rendering:pixelated}
 .pixbox .cap{color:var(--warn);border-color:var(--warn)}
@@ -74,6 +77,8 @@ ul.chk li.s0{color:var(--ok)} ul.chk li.s1{color:#FFB454} ul.chk li.s2{color:var
  .bar{padding:12px 16px}
  .pixbox canvas{width:96px;height:96px}
  .hint{font-size:10px}
+ .tag{font-size:9.5px;padding:2px 4px}
+ .cap{font-size:9px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -107,7 +112,7 @@ ul.chk li.s0{color:var(--ok)} ul.chk li.s1{color:#FFB454} ul.chk li.s2{color:var
           <div class="pixmsg" id="pixMsg">defect is outside the field of view</div>
         </div>
       </div>
-      <div class="hint">Drag to orbit · scroll to zoom · right-drag to pan · «Station» moves in on the part</div>
+      <div class="hint" id="hint">Drag to orbit · scroll to zoom · right-drag to pan · «Station» moves in on the part</div>
     </div>
 
     <aside class="panel" id="panel">
@@ -1891,16 +1896,60 @@ const labelDefs=[
   {id:'fov',cls:'ac',txt:()=>`FOV ${n(CTX.c.fovW,1)} × ${n(CTX.c.fovH,1)} mm`,pos:()=>new THREE.Vector3(0,state.H,CTX.c.fovH/2+10),hide:()=>!state.fov}
 ];
 const labelEls={};
-labelDefs.forEach(d=>{const e=document.createElement('div');e.className='tag '+d.cls;$('labels').appendChild(e);labelEls[d.id]=e;});
+const SVGNS='http://www.w3.org/2000/svg';
+const leaders=document.createElementNS(SVGNS,'svg');leaders.id='leaders';$('labels').appendChild(leaders);
+labelDefs.forEach(d=>{
+  const e=document.createElement('div');e.className='tag '+d.cls;$('labels').appendChild(e);
+  const ln=document.createElementNS(SVGNS,'line'),dot=document.createElementNS(SVGNS,'circle');dot.setAttribute('r','2');
+  leaders.appendChild(ln);leaders.appendChild(dot);
+  labelEls[d.id]={e,ln,dot,txt:null,shown:false};
+});
+if(matchMedia('(pointer:coarse)').matches)$('hint').textContent='Drag to orbit · pinch to zoom · two-finger drag to pan';
+/* placement priority: the most important labels claim free space first; the rest move aside or hide */
+const LABEL_PRIO=['def','fov','wd','cam','lens','light','part','ld'];
 const tv=new THREE.Vector3();
+function hit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function stageRect(el,s){const r=el.getBoundingClientRect();return{x:r.left-s.left-3,y:r.top-s.top-3,w:r.width+6,h:r.height+6};}
+function setShown(L,on){if(L.shown===on)return;L.shown=on;const v=on?'':'none';L.e.style.display=v;L.ln.style.display=v;L.dot.style.display=v;}
 function placeLabels(w,h,activeCam){
-  for(const d of labelDefs){
-    const e=labelEls[d.id];
-    if(state.view==='cam'||(d.hide&&d.hide())){e.style.display='none';continue;}
+  const s=stage.getBoundingClientRect();
+  const obst=[];
+  if(state.view!=='cam')for(const el of document.querySelectorAll('#insets .inset,#insets .pixbox,#insets .cap'))if(el.offsetParent)obst.push(stageRect(el,s));
+  obst.push(stageRect($('hint'),s));
+  const todo=[];
+  for(const id of LABEL_PRIO){
+    const d=labelDefs.find(x=>x.id===id),L=labelEls[id];
+    if(state.view==='cam'||(d.hide&&d.hide())){setShown(L,false);continue;}
     tv.copy(d.pos()).add(station.position).project(activeCam);
-    if(tv.z>1||tv.z<-1){e.style.display='none';continue;}
-    e.style.display='';e.textContent=d.txt();
-    e.style.left=((tv.x*.5+.5)*w)+'px';e.style.top=((-tv.y*.5+.5)*h)+'px';
+    if(tv.z>1||tv.z<-1){setShown(L,false);continue;}
+    const t=d.txt();if(t!==L.txt){L.txt=t;L.e.textContent=t;}
+    setShown(L,true);
+    todo.push({L,ax:(tv.x*.5+.5)*w,ay:(-tv.y*.5+.5)*h});
+  }
+  for(const o of todo){o.bw=o.L.e.offsetWidth;o.bh=o.L.e.offsetHeight;}
+  const placed=[],M=4,G=3;
+  for(const o of todo){
+    const {L,ax,ay,bw,bh}=o;
+    const cx=Math.min(Math.max(ax-bw/2,M),Math.max(M,w-bw-M));
+    let best=null;
+    for(let k=0;k<=12&&!best;k++){
+      for(const sg of k?[-1,1]:[1]){
+        const y=ay-bh/2+sg*k*(bh+G);
+        const r={x:cx,y:Math.min(Math.max(y,M),h-bh-M),w:bw,h:bh};
+        if(!placed.some(p=>hit(r,p))&&!obst.some(p=>hit(r,p))){best=r;break;}
+      }
+    }
+    if(!best||ax<-20||ax>w+20||ay<-20||ay>h+20){setShown(L,false);continue;}
+    placed.push({x:best.x-G,y:best.y-G,w:best.w+2*G,h:best.h+2*G});
+    L.e.style.transform=`translate(${Math.round(best.x)}px,${Math.round(best.y)}px)`;
+    /* leader line from the label edge to the 3D anchor when the label had to move */
+    const ex=Math.min(Math.max(ax,best.x),best.x+bw),ey=Math.min(Math.max(ay,best.y),best.y+bh);
+    const far=Math.hypot(ex-ax,ey-ay)>6;
+    L.ln.style.display=L.dot.style.display=far?'':'none';
+    if(far){
+      L.ln.setAttribute('x1',ex);L.ln.setAttribute('y1',ey);L.ln.setAttribute('x2',ax);L.ln.setAttribute('y2',ay);
+      L.dot.setAttribute('cx',ax);L.dot.setAttribute('cy',ay);
+    }
   }
 }
 
