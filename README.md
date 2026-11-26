@@ -13,4 +13,5 @@ A CDN-loading variant exists as the source form; the offline build is the same c
 ## Solder joint inspection (lipituri)
 
 - `lipituri/index.html` — 3D simulator of a laser-profiler station (fixed Cognex DS925B, linear axis + 0°/90° rotary table) inspecting flat pins soldered on a PCB: two scans, height maps, live laser profile, wetted-length and fillet-height checks, frame–PCB gap. Generic part, didactic model. Same offline build (three.js r128 inlined).
-- Live: https://andrei0182.github.io/vision-simulator/lipituri/
+- Live (RO): https://andrei0182.github.io/vision-simulator/lipituri/
+- Live (EN): https://andrei0182.github.io/vision-simulator/lipituri/en.html
